@@ -1,0 +1,47 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "pygithooks"
+version = "0.1.0"
+description = "A simple Git hooks manager for Python projects"
+authors = ["Boldizsar Palotas <boldizsar.palotas@gmail.com>"]
+license = "0BSD"
+readme = "README.md"
+packages = [
+    {include = "pygithooks.py"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Version Control",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Topic :: Utilities",
+]
+
+[tool.poetry.scripts]
+pygithooks = 'pygithooks:main'
+
+[tool.poetry.dependencies]
+python = "^3.8"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.2.2"
+mypy = "^1.8.0"
+GitPython = "^3.1.42"
+tox = "^4.13.0"
+pytest = "^8.0.1"
+
+[tool.ruff]
+line-length = 100

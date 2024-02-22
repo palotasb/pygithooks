@@ -22,11 +22,12 @@ if sys.version_info < (3, 8):
 import argparse
 import os
 import subprocess
+import stat
 import shlex
 from functools import cached_property
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, TextIO, Optional, Dict, Union, Any, Tuple
+from typing import List, TextIO, Optional, Dict, Union, Any, Tuple, Iterable
 
 
 def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
@@ -57,8 +58,12 @@ class Ctx:
     def run(self, *args: Union[str, List[Any]], **kwargs) -> subprocess.CompletedProcess:
         kwargs.setdefault("check", True)
         kwargs.setdefault("text", True)
-        kwargs.setdefault("env", self.env)
         kwargs.setdefault("cwd", self.cwd)
+        kwargs.setdefault("env", self.env)
+        if not kwargs.get("capture_output"):
+            kwargs.setdefault("stdin", self.stdin)
+            kwargs.setdefault("stdout", self.stdout)
+            kwargs.setdefault("stderr", self.stderr)
         args = split_args(*args)
         return subprocess.run(args, **kwargs)
 
@@ -69,8 +74,8 @@ HOOK_TEMPLATE = R"""#!/bin/sh
 set -eu
 
 sys_exe={sys_exe}
-if command -v "$sys_exe" ; then
-    exec "$sys_exe" {pygithooks} exec {hook} "$@"
+if command -v "$sys_exe" 1>/dev/null 2>&1 ; then
+    exec "$sys_exe" {pygithooks} exec {hook} -- "$@"
 fi
 
 echo "python ($sys_exe) not found, pygithooks not running" 1>&2
@@ -82,6 +87,29 @@ exit 0
 class GitHook:
     name: str
     args: Tuple[str, ...] = ()
+
+
+@dataclass
+class GitHookScript:
+    git_hook: GitHook
+    path: Path
+    path_full: Path
+
+
+@dataclass
+class CompletedGitHookScript:
+    git_hook_script: GitHookScript
+    completed_process: subprocess.CompletedProcess
+
+    @staticmethod
+    def run(ctx: Ctx, git_hook_script: GitHookScript) -> "CompletedGitHookScript":
+        return CompletedGitHookScript(
+            git_hook_script, ctx.run([git_hook_script.path_full], check=False, capture_output=True)
+        )
+
+    @property
+    def succeeded(self) -> bool:
+        return self.completed_process.returncode == 0
 
 
 GIT_HOOKS: Dict[str, GitHook] = {
@@ -104,19 +132,62 @@ class PyGitHooks:
 
     def exec(self, *, hook: str):
         self.ctx.msg("running hook", hook)
+        self.env_path = self.env_path_with_sys_exe_prefix
+        results = [
+            CompletedGitHookScript.run(self.ctx, script)
+            for script in self.git_hook_scripts(GIT_HOOKS[hook])
+        ]
+
+        for result in results:
+            self.ctx.msg(
+                "running", result.git_hook_script.path, "...", "✅" if result.succeeded else "❌"
+            )
+            self.ctx.stderr.write(result.completed_process.stderr)
+            self.ctx.stdout.write(result.completed_process.stdout)
+
+        all_succeeded = all(result.succeeded for result in results)
+        if all_succeeded:
+            self.ctx.msg(f"✅ all {hook} hooks succeeded")
+            sys.exit(0)
+        else:
+            self.ctx.msg(f"❌ some {hook} hooks failed")
+            sys.exit(1)
 
     def install(self):
         self.ctx.msg("installing pygithooks into", self.git_hooks_path)
         for hook in GIT_HOOKS.values():
-            (self.git_hooks_path / hook.name).write_text(
+            hook_path = self.git_hooks_path / hook.name
+            hook_path.write_text(
                 HOOK_TEMPLATE.format(
                     sys_exe=shlex.quote(sys.executable),
                     pygithooks=shlex.quote(FILE.as_posix()),
-                    hook=hook.name)
+                    hook=hook.name,
+                )
             )
+            hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC)
+
+    def git_hook_scripts(self, git_hook: GitHook) -> Iterable[GitHookScript]:
+        top_level = Path(self.pygithooks_path / git_hook.name)
+        if top_level.is_dir():
+            yield from [
+                GitHookScript(git_hook, path.relative_to(self.pygithooks_path), path)
+                for path in sorted(top_level.iterdir())
+            ]
 
     def git(self, *args, **kwargs) -> subprocess.CompletedProcess:
         return self.ctx.run("git", *args, **kwargs)
+
+    @property
+    def env_path(self) -> str:
+        return self.ctx.env.get("PATH", "")
+
+    @env_path.setter
+    def env_path(self, path: str):
+        self.ctx.env["PATH"] = path
+
+    @property
+    def env_path_with_sys_exe_prefix(self) -> str:
+        return os.pathsep.join([str(Path(sys.executable).parent.resolve()), self.env_path])
 
     @cached_property
     def git_dir(self) -> Path:
@@ -132,6 +203,16 @@ class PyGitHooks:
                 capture_output=True,
             ).stdout.strip()
         )
+
+    @cached_property
+    def git_top_level(self) -> Path:
+        return Path(
+            self.git("rev-parse --show-toplevel", capture_output=True).stdout.strip()
+        ).absolute()
+
+    @cached_property
+    def pygithooks_path(self) -> Path:
+        return self.git_top_level / ".pygithooks"
 
 
 def main(ctx: Optional[Ctx] = None):

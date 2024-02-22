@@ -1,18 +1,14 @@
 #!/bin/sh
 # syntax: -*- Python -*-
 """:"
-if command -v python3 >/dev/null ; then
-    exec python3 "$0" "$@"
-elif command -v python >/dev/null ; then
-    exec python "$0" "$@"
-fi
+set -eu
+for python in python3 python py ; do
+    if command -v "$python" >/dev/null ; then
+        exec "$python" "$0" "$@"
+    fi
+done
 
 echo "python not found, pygithooks not running" 1>&2
-
-if [ "{$1:-}" = "exec" ] ; then
-    exit 0
-fi
-
 exit 1
 ":"""
 
@@ -25,9 +21,20 @@ if sys.version_info < (3, 8):
 
 import argparse
 import os
+import subprocess
+import shlex
+from functools import cached_property
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, TextIO, Optional, Dict
+from typing import List, TextIO, Optional, Dict, Union, Any, Tuple
+
+
+def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
+    return [
+        str(sub_arg)
+        for args in arg_groups
+        for sub_arg in (shlex.split(args) if isinstance(args, str) else args)
+    ]
 
 
 @dataclass
@@ -39,16 +46,56 @@ class Ctx:
     stdout: TextIO = field(default_factory=lambda: sys.stdout)
     stderr: TextIO = field(default_factory=lambda: sys.stderr)
 
+    def msg(self, *args, **kwargs):
+        kwargs.setdefault("file", self.stderr)
+        print(*args, **kwargs)
+
+    def out(self, *args, **kwargs):
+        kwargs.setdefault("file", self.stderr)
+        print(*args, **kwargs)
+
+    def run(self, *args: Union[str, List[Any]], **kwargs) -> subprocess.CompletedProcess:
+        kwargs.setdefault("check", True)
+        kwargs.setdefault("text", True)
+        kwargs.setdefault("env", self.env)
+        kwargs.setdefault("cwd", self.cwd)
+        args = split_args(*args)
+        return subprocess.run(args, **kwargs)
+
+
+FILE = Path(__file__).absolute()
+
+HOOK_TEMPLATE = R"""#!/bin/sh
+set -eu
+
+sys_exe={sys_exe}
+if command -v "$sys_exe" ; then
+    exec "$sys_exe" {pygithooks} exec {hook} "$@"
+fi
+
+echo "python ($sys_exe) not found, pygithooks not running" 1>&2
+exit 0
+"""
+
+
+@dataclass
+class GitHook:
+    name: str
+    args: Tuple[str, ...] = ()
+
+
+GIT_HOOKS: Dict[str, GitHook] = {
+    "pre-commit": GitHook("pre-commit"),
+}
+
 
 @dataclass
 class PyGitHooks:
     ctx: Ctx
     parser: argparse.ArgumentParser
-    git_dir: Optional[Path] = None
 
     def main(self):
         args = vars(self.parser.parse_args(self.ctx.argv[1:]))
-        self.git_dir = args.pop("git_dir", None)
         action = args.pop("action")
         action(self, **args)
 
@@ -56,10 +103,35 @@ class PyGitHooks:
         self.parser.print_help(self.ctx.stderr)
 
     def exec(self, *, hook: str):
-        self.ctx.stdout.write(f"{hook}\n")
+        self.ctx.msg("running hook", hook)
 
     def install(self):
-        self.ctx.stdout.write(f"install into {self.git_dir}\n")
+        self.ctx.msg("installing pygithooks into", self.git_hooks_path)
+        for hook in GIT_HOOKS.values():
+            (self.git_hooks_path / hook.name).write_text(
+                HOOK_TEMPLATE.format(
+                    sys_exe=shlex.quote(sys.executable),
+                    pygithooks=shlex.quote(FILE.as_posix()),
+                    hook=hook.name)
+            )
+
+    def git(self, *args, **kwargs) -> subprocess.CompletedProcess:
+        return self.ctx.run("git", *args, **kwargs)
+
+    @cached_property
+    def git_dir(self) -> Path:
+        return Path(self.git("rev-parse --git-dir", capture_output=True).stdout.strip())
+
+    @cached_property
+    def git_hooks_path(self) -> Path:
+        return Path(
+            self.git(
+                "config --get --default",
+                [self.git_dir / "hooks"],
+                "core.hooksPath",
+                capture_output=True,
+            ).stdout.strip()
+        )
 
 
 def main(ctx: Optional[Ctx] = None):
@@ -70,10 +142,6 @@ def main(ctx: Optional[Ctx] = None):
         allow_abbrev=False,
     )
     parser.set_defaults(action=PyGitHooks.help)
-    # TODO --chdir/-C
-    # TODO --git-work-tree/GIT_WORK_TREE (?)
-    # TODO --git-hooks-path/git config core.hooksPath
-    parser.add_argument("--git-dir", type=Path, help="Path to repository (\".git\" directory)", default=ctx.env.get("GIT_DIR"))
     subparsers = parser.add_subparsers(title="Commands")
 
     parser_exec = subparsers.add_parser(

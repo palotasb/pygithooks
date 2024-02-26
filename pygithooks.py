@@ -29,6 +29,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, TextIO, Optional, Dict, Union, Any, Tuple, Iterable
 
+import rich
+import rich.console
+import rich.theme
+
 
 def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
     return [
@@ -36,6 +40,22 @@ def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
         for args in arg_groups
         for sub_arg in (shlex.split(args) if isinstance(args, str) else args)
     ]
+
+
+_THEME = rich.theme.Theme(
+    {
+        "pgh": "dim bold",
+        "info": "blue",
+        "succ": "green",
+        "skip": "yellow",
+        "fail": "red",
+        "bold_succ": "bold green",
+        "bold_skip": "bold yellow",
+        "bold_fail": "bold red",
+    }
+)
+
+_PGH = "[pgh]pygithooks[/pgh]:"
 
 
 @dataclass
@@ -46,14 +66,16 @@ class Ctx:
     stdin: TextIO = field(default_factory=lambda: sys.stdin)
     stdout: TextIO = field(default_factory=lambda: sys.stdout)
     stderr: TextIO = field(default_factory=lambda: sys.stderr)
+    console: rich.console.Console = field(
+        default_factory=lambda: rich.console.Console(file=sys.stderr, theme=_THEME)
+    )
 
     def msg(self, *args, **kwargs):
-        kwargs.setdefault("file", self.stderr)
-        print(*args, **kwargs)
+        self.console.print(*args, **kwargs)
 
     def out(self, *args, **kwargs):
         kwargs.setdefault("file", self.stderr)
-        print(*args, **kwargs)
+        rich.print(*args, **kwargs)
 
     def run(self, *args: Union[str, List[Any]], **kwargs) -> subprocess.CompletedProcess:
         kwargs.setdefault("check", True)
@@ -75,7 +97,7 @@ set -eu
 
 sys_exe={sys_exe}
 if command -v "$sys_exe" 1>/dev/null 2>&1 ; then
-    exec "$sys_exe" {pygithooks} exec {hook} -- "$@"
+    exec "$sys_exe" {pygithooks} run {hook} -- "$@"
 fi
 
 echo "python ($sys_exe) not found, pygithooks not running" 1>&2
@@ -130,8 +152,8 @@ class PyGitHooks:
     def help(self):
         self.parser.print_help(self.ctx.stderr)
 
-    def exec(self, *, hook: str):
-        self.ctx.msg("running hook", hook)
+    def run(self, *, hook: str):
+        self.ctx.msg(_PGH, f"[bold]{hook}[/bold] hooks running...", style="info")
         self.env_path = self.env_path_with_sys_exe_prefix
         results = [
             CompletedGitHookScript.run(self.ctx, script)
@@ -139,18 +161,26 @@ class PyGitHooks:
         ]
 
         for result in results:
-            self.ctx.msg(
-                "running", result.git_hook_script.path, "...", "✅" if result.succeeded else "❌"
-            )
+            if result.succeeded:
+                self.ctx.msg(_PGH, f"[bold]{result.git_hook_script.path}[/bold]: OK", style="succ")
+            else:
+                self.ctx.msg(
+                    _PGH, f"[bold]{result.git_hook_script.path}[/bold]: FAILED", style="fail"
+                )
+
             self.ctx.stderr.write(result.completed_process.stderr)
             self.ctx.stdout.write(result.completed_process.stdout)
 
         all_succeeded = all(result.succeeded for result in results)
-        if all_succeeded:
-            self.ctx.msg(f"✅ all {hook} hooks succeeded")
+        any_succeeded = any(result.succeeded for result in results)
+        if any_succeeded and all_succeeded:
+            self.ctx.msg(_PGH, f"{hook} hooks SUCCEEDED", style="bold_succ")
+            sys.exit(0)
+        elif all_succeeded:
+            self.ctx.msg(_PGH, f"{hook} hooks SKIPPED", style="bold_skip")
             sys.exit(0)
         else:
-            self.ctx.msg(f"❌ some {hook} hooks failed")
+            self.ctx.msg(_PGH, f"{hook} hooks FAILED", style="bold_fail")
             sys.exit(1)
 
     def install(self):
@@ -225,13 +255,13 @@ def main(ctx: Optional[Ctx] = None):
     parser.set_defaults(action=PyGitHooks.help)
     subparsers = parser.add_subparsers(title="Commands")
 
-    parser_exec = subparsers.add_parser(
-        "exec",
-        description="Execute a Git hook",
-        help="Execute a Git hook",
+    parser_run = subparsers.add_parser(
+        "run",
+        description="Run a Git hook",
+        help="Run a Git hook",
     )
-    parser_exec.set_defaults(action=PyGitHooks.exec)
-    parser_exec.add_argument("hook", help="Hook name as defined by Git")
+    parser_run.set_defaults(action=PyGitHooks.run)
+    parser_run.add_argument("hook", choices=GIT_HOOKS.keys(), help="Hook name as defined by Git")
 
     parser_install = subparsers.add_parser(
         "install",

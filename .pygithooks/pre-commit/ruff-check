@@ -1,5 +1,2 @@
-#!/bin/sh
-set -eux
-
-pwd
+#!/bin/sh -eux
 ruff check

@@ -125,17 +125,9 @@ class CompletedGitHookScript:
 
     @staticmethod
     def run(ctx: Ctx, git_hook_script: GitHookScript) -> "CompletedGitHookScript":
-        ctx.msg(_PGH, f"running hook [bold]{git_hook_script.path}[/bold]:", style="info")
-        result = CompletedGitHookScript(
-            git_hook_script, ctx.run([git_hook_script.path_full], check=False, capture_output=False)
+        return CompletedGitHookScript(
+            git_hook_script, ctx.run([git_hook_script.path_full], check=False, capture_output=True)
         )
-        ctx.msg(
-            _PGH,
-            f"hook [bold]{git_hook_script.path}[/bold]",
-            "SUCCEEDED" if result.succeeded else "FAILED",
-            style=("succ" if result.succeeded else "fail"),
-        )
-        return result
 
     @property
     def succeeded(self) -> bool:
@@ -168,7 +160,22 @@ class PyGitHooks:
             for script in self.git_hook_scripts(GIT_HOOKS[hook])
         ]
 
-        self.ctx.msg(_PGH, f"no more [bold]{hook}[/bold] hooks to run", style="info")
+        for result in results:
+            if result.succeeded:
+                self.ctx.msg(
+                    _PGH,
+                    f"[bold]{result.git_hook_script.path}[/bold]: [bold]OK[/bold]",
+                    style="succ",
+                )
+            else:
+                self.ctx.msg(
+                    _PGH,
+                    f"[bold]{result.git_hook_script.path}[/bold]: [bold]FAILED[/bold]",
+                    style="fail",
+                )
+
+            self.ctx.stderr.write(result.completed_process.stderr)
+            self.ctx.stdout.write(result.completed_process.stdout)
 
         all_succeeded = all(result.succeeded for result in results)
         any_succeeded = any(result.succeeded for result in results)

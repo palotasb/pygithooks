@@ -46,3 +46,6 @@ pytest = "^8.0.1"
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I"]

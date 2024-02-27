@@ -67,7 +67,7 @@ class Ctx:
     stdout: TextIO = field(default_factory=lambda: sys.stdout)
     stderr: TextIO = field(default_factory=lambda: sys.stderr)
     console: rich.console.Console = field(
-        default_factory=lambda: rich.console.Console(file=sys.stderr, theme=_THEME)
+        default_factory=lambda: rich.console.Console(file=sys.stderr, theme=_THEME, highlight=False)
     )
 
     def msg(self, *args, **kwargs):

@@ -162,10 +162,16 @@ class PyGitHooks:
 
         for result in results:
             if result.succeeded:
-                self.ctx.msg(_PGH, f"[bold]{result.git_hook_script.path}[/bold]: OK", style="succ")
+                self.ctx.msg(
+                    _PGH,
+                    f"[bold]{result.git_hook_script.path}[/bold]: [bold]OK[/bold]",
+                    style="succ",
+                )
             else:
                 self.ctx.msg(
-                    _PGH, f"[bold]{result.git_hook_script.path}[/bold]: FAILED", style="fail"
+                    _PGH,
+                    f"[bold]{result.git_hook_script.path}[/bold]: [bold]FAILED[/bold]",
+                    style="fail",
                 )
 
             self.ctx.stderr.write(result.completed_process.stderr)

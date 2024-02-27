@@ -1,33 +1,13 @@
-#!/bin/sh
-# syntax: -*- Python -*-
-""":"
-set -eu
-for python in python3 python py ; do
-    if command -v "$python" >/dev/null ; then
-        exec "$python" "$0" "$@"
-    fi
-done
-
-echo "python not found, pygithooks not running" 1>&2
-exit 1
-":"""
-
-import sys
-
-if sys.version_info < (3, 8):
-    sys.stderr.write("%s must run with Python 3.8+, not %s\n" % (__file__, sys.version))
-    sys.exit(1)
-
-
 import argparse
 import os
-import subprocess
-import stat
 import shlex
-from functools import cached_property
+import stat
+import subprocess
+import sys
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
-from typing import List, TextIO, Optional, Dict, Union, Any, Tuple, Iterable
+from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
 import rich
 import rich.console

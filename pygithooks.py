@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import os
 import shlex
 import stat
@@ -48,16 +49,13 @@ def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
     ]
 
 
-class PyGitHooksError(Exception):
-    pass
-
-
-class PyGitHooksUsageError(PyGitHooksError):
+class PyGitHooksUsageError(Exception):
     pass
 
 
 @dataclass
 class Ctx:
+    stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
     argv: List[str] = field(default_factory=lambda: sys.argv)
     cwd: Path = field(default_factory=Path.cwd)
     env: Dict[str, str] = field(default_factory=lambda: dict(os.environ))
@@ -67,7 +65,7 @@ class Ctx:
     console: rich.console.Console = field(
         default_factory=lambda: rich.console.Console(file=sys.stderr, theme=_THEME, highlight=False)
     )
-    verbose: bool = False
+    verbose: bool = True
 
     def msg(self, *args, **kwargs):
         self.console.print(_PGH, *args, **kwargs)
@@ -186,7 +184,7 @@ class PyGitHooks:
             chdir = chdir.absolute()
             if chdir.is_dir():
                 self.ctx.cwd = chdir
-                os.chdir(self.ctx.cwd)
+                self.ctx.stack.enter_context(contextlib.chdir(chdir))
             else:
                 raise PyGitHooksUsageError(
                     f"not a directory: {chdir}",
@@ -326,24 +324,47 @@ class PyGitHooks:
         return self.git_repo / ".pygithooks"
 
 
-def main(ctx: Ctx | None = None):
-    ctx = ctx or Ctx()
+@contextlib.contextmanager
+def basic_error_handler():
     try:
-        py_git_hooks = PyGitHooks(ctx)
-        py_git_hooks.main()
+        yield
+    except Exception as err:
+        print(
+            "pygithooks: INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, file=sys.stderr
+        )
+        print("pygithooks: This is a bug, please report it.", file=sys.stderr)
+        print("pygithooks:", *traceback.format_exception(err), sep="\n", file=sys.stderr)
+        sys.exit(2)
+
+
+@contextlib.contextmanager
+def fancy_ctx_aware_error_handler(ctx: Ctx):
+    try:
+        yield
     except PyGitHooksUsageError as err:
         ctx.msg("ERROR:", err.args[0], style="bold red")
         ctx.msg("Potential solutions to this error:", err.args[1], style="yellow")
         ctx.msg("Otherwise this is a bug, please report it.", style="yellow")
         sys.exit(1)
-    except PyGitHooksError as err:
-        ctx.msg("INTERNAL ERROR:", *err.args, style="bold red")
+    except Exception as err:
+        ctx.msg("INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, style="bold red")
         ctx.msg("This is a bug, please report it.", style="red")
         if ctx.verbose:
             ctx.msg(*traceback.format_exception(err), sep="\n", style="yellow")
         else:
             ctx.msg("For more error info, re-run with the `--verbose` CLI option.", style="yellow")
         sys.exit(2)
+
+
+def main(stack: contextlib.ExitStack | None = None, ctx: Ctx | None = None):
+    stack = stack or contextlib.ExitStack()
+    with stack:
+        stack.enter_context(basic_error_handler())
+        ctx = ctx or Ctx(stack)
+        stack.enter_context(fancy_ctx_aware_error_handler(ctx))
+        assert stack is ctx.stack
+        py_git_hooks = PyGitHooks(ctx)
+        py_git_hooks.main()
 
 
 if __name__ == "__main__":

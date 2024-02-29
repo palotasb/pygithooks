@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple,
 import rich
 import rich.console
 import rich.theme
+import rich.traceback
 
 FILE = Path(__file__).absolute()
 
@@ -37,7 +38,8 @@ _THEME = rich.theme.Theme(
         "warn": "yellow",
         "WARN": "bold yellow",
         "fail": "red",
-        "FAIL": "bold red",
+        "FAIL": "bold bright_red",
+        "traceback.border": "yellow",
     }
 )
 
@@ -140,7 +142,13 @@ class PyGitHooks:
             allow_abbrev=False,
         )
         self.parser.set_defaults(action=self.help)
-        self.parser.add_argument("-v", "--verbose", action="store_true", help="more verbose output")
+        self.parser.add_argument(
+            "-v",
+            "--verbose",
+            action="store_true",
+            default=("VERBOSE" in self.ctx.env),
+            help="more verbose output",
+        )
         self.parser.add_argument(
             "-C",
             "--chdir",
@@ -345,12 +353,17 @@ def fancy_ctx_aware_error_handler(ctx: Ctx):
         ctx.msg("Otherwise this is a bug, please report it.", style="warn")
         sys.exit(1)
     except Exception as err:
-        ctx.msg("INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, style="FAIL")
-        ctx.msg("This is a bug, please report it.", style="fail")
+        ctx.msg(f"INTERNAL ERROR: {err.__class__.__name__}:", *err.args, style="FAIL")
         if ctx.verbose:
-            ctx.msg(*traceback.format_exception(err), sep="\n", style="warn")
+            ctx.msg("This is a bug, please report it.", style="fail")
+            err_tb = err.__traceback__.tb_next if err.__traceback__ else None
+            tb = rich.traceback.Traceback.from_exception(err.__class__, err, err_tb, extra_lines=1)
+            ctx.console.print(tb)
         else:
-            ctx.msg("For more error info, re-run with the `--verbose` CLI option.", style="warn")
+            ctx.msg(
+                "This is a bug, please report it. For details, use the `-v`/`--verbose` CLI option or set the VERBOSE env var.",
+                style="fail",
+            )
         sys.exit(2)
 
 

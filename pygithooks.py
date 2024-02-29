@@ -120,7 +120,7 @@ class PyGitHooks:
         args = vars(self.parser.parse_args(self.ctx.argv[1:]))
         chdir: Path
         if chdir := args.pop("chdir", None):
-            os.chdir(chdir)
+            self.ctx.cwd = chdir
 
         action = args.pop("action")
         action(self, **args)

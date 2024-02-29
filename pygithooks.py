@@ -32,9 +32,12 @@ exit 0
 _THEME = rich.theme.Theme(
     {
         "info": "blue",
-        "success": "green",
-        "skip": "yellow",
+        "pass": "green",
+        "PASS": "bold green",
+        "warn": "yellow",
+        "WARN": "bold yellow",
         "fail": "red",
+        "FAIL": "bold red",
     }
 )
 
@@ -110,7 +113,7 @@ class CompletedGitHookScript:
         return self.completed_process is None
 
     @property
-    def succeeded(self) -> bool:
+    def passed(self) -> bool:
         return self.completed_process is not None and self.completed_process.returncode == 0
 
 
@@ -224,51 +227,46 @@ class PyGitHooks:
     def _run_git_hook_script(self, git_hook_script: GitHookScript) -> CompletedGitHookScript:
         completed_process: Optional[subprocess.CompletedProcess] = None
         try:
-            completed_process = self.ctx.run(
-                [git_hook_script.path_full], check=False, capture_output=True
-            )
+            completed_process = self.ctx.run([git_hook_script.path_full], check=False)
         except OSError:
             pass
 
         return CompletedGitHookScript(git_hook_script, completed_process)
 
     def run(self, *, hook: str):
-        self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
+        # self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
         self.env_path = self.env_path_with_sys_exe_prefix
 
         results: List[CompletedGitHookScript] = []
         for git_hook_script in self.git_hook_scripts(GIT_HOOKS[hook]):
+            # self.ctx.msg(f"running hook [bold]{git_hook_script.name}[/bold]:", style="info")
             result = self._run_git_hook_script(git_hook_script)
             results.append(result)
 
-            if result.succeeded:
+            if result.passed:
                 self.ctx.msg(
-                    f"[bold]{result.git_hook_script.name}[/bold]: [bold]OK[/bold]", style="success"
+                    f"[bold]{git_hook_script.name}[/bold]: [bold]PASSED[/bold]", style="pass"
                 )
             elif result.skipped:
                 self.ctx.msg(
-                    f"[bold]{result.git_hook_script.name}[/bold]: [bold]SKIPPED[/bold]",
-                    style="skip",
+                    f"[bold]{git_hook_script.name}[/bold]: [bold]SKIPPED[/bold]", style="warn"
                 )
             else:
                 self.ctx.msg(
-                    f"[bold]{result.git_hook_script.name}[/bold]: [bold]FAILED[/bold]", style="fail"
+                    f"[bold]{git_hook_script.name}[/bold]: [bold]FAILED[/bold]", style="fail"
                 )
 
-            if result.completed_process:
-                self.ctx.stderr.write(result.completed_process.stderr)
-                self.ctx.stdout.write(result.completed_process.stdout)
-
-        all_succeeded = all(result.succeeded or result.skipped for result in results)
-        any_succeeded = any(result.succeeded for result in results)
-        if any_succeeded and all_succeeded:
-            self.ctx.msg(f"{hook} hooks SUCCEEDED", style="bold green")
+        # self.ctx.msg(f"finished running [bold]{hook}[/bold] hooks.", style="info")
+        all_passed = all(result.passed or result.skipped for result in results)
+        any_passed = any(result.passed for result in results)
+        if any_passed and all_passed:
+            # self.ctx.msg(f"{hook} hooks PASSED", style="PASS")
             sys.exit(0)
-        elif all_succeeded:
-            self.ctx.msg(f"{hook} hooks SKIPPED", style="bold yellow")
+        elif all_passed:
+            # self.ctx.msg(f"{hook} hooks SKIPPED", style="WARN")
             sys.exit(0)
         else:
-            self.ctx.msg(f"{hook} hooks FAILED", style="bold red")
+            # self.ctx.msg(f"{hook} hooks FAILED", style="FAIL")
             sys.exit(1)
 
     def install(self):
@@ -342,17 +340,17 @@ def fancy_ctx_aware_error_handler(ctx: Ctx):
     try:
         yield
     except PyGitHooksUsageError as err:
-        ctx.msg("ERROR:", err.args[0], style="bold red")
-        ctx.msg("Potential solutions to this error:", err.args[1], style="yellow")
-        ctx.msg("Otherwise this is a bug, please report it.", style="yellow")
+        ctx.msg("ERROR:", err.args[0], style="FAIL")
+        ctx.msg("Potential solutions to this error:", err.args[1], style="warn")
+        ctx.msg("Otherwise this is a bug, please report it.", style="warn")
         sys.exit(1)
     except Exception as err:
-        ctx.msg("INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, style="bold red")
-        ctx.msg("This is a bug, please report it.", style="red")
+        ctx.msg("INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, style="FAIL")
+        ctx.msg("This is a bug, please report it.", style="fail")
         if ctx.verbose:
-            ctx.msg(*traceback.format_exception(err), sep="\n", style="yellow")
+            ctx.msg(*traceback.format_exception(err), sep="\n", style="warn")
         else:
-            ctx.msg("For more error info, re-run with the `--verbose` CLI option.", style="yellow")
+            ctx.msg("For more error info, re-run with the `--verbose` CLI option.", style="warn")
         sys.exit(2)
 
 

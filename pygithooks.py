@@ -4,10 +4,11 @@ import shlex
 import stat
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
 import rich
 import rich.console
@@ -47,6 +48,14 @@ def split_args(*arg_groups: Union[str, List[Any]]) -> List[str]:
     ]
 
 
+class PyGitHooksError(Exception):
+    pass
+
+
+class PyGitHooksUsageError(PyGitHooksError):
+    pass
+
+
 @dataclass
 class Ctx:
     argv: List[str] = field(default_factory=lambda: sys.argv)
@@ -58,6 +67,7 @@ class Ctx:
     console: rich.console.Console = field(
         default_factory=lambda: rich.console.Console(file=sys.stderr, theme=_THEME, highlight=False)
     )
+    verbose: bool = False
 
     def msg(self, *args, **kwargs):
         self.console.print(_PGH, *args, **kwargs)
@@ -114,16 +124,101 @@ GIT_HOOKS: Dict[str, GitHook] = {
 @dataclass
 class PyGitHooks:
     ctx: Ctx
-    parser: argparse.ArgumentParser
+    parser: argparse.ArgumentParser = field(init=False)
+    verbose: bool = field(init=False)
+    git_repo: Path = field(init=False)
+    git_dir: Path = field(init=False)
+    action: Callable = field(init=False)
+    args: Dict[str, Any] = field(init=False)
+
+    def __post_init__(self):
+        self.parser = argparse.ArgumentParser(
+            Path(self.ctx.argv[0]).name,
+            description="TODO",
+            allow_abbrev=False,
+        )
+        self.parser.set_defaults(action=self.help)
+        self.parser.add_argument("-v", "--verbose", action="store_true", help="more verbose output")
+        self.parser.add_argument(
+            "-C",
+            "--chdir",
+            metavar="DIR",
+            type=Path,
+            help="change the current working directory to DIR",
+        )
+        self.parser.add_argument(
+            "-g",
+            "--git-repo",
+            metavar="DIR",
+            type=Path,
+            help="use DIR as the git repo instead of the working directory",
+        )
+        self.parser.add_argument(
+            "-G", "--git-dir", metavar="DIR", type=Path, help="use DIR as the .git directory"
+        )
+        subparsers = self.parser.add_subparsers(title="Commands")
+
+        parser_run = subparsers.add_parser(
+            "run",
+            description="Run a Git hook",
+            help="Run a Git hook",
+        )
+        parser_run.set_defaults(action=self.run)
+        parser_run.add_argument(
+            "hook", choices=GIT_HOOKS.keys(), help="Hook name as defined by Git"
+        )
+
+        parser_install = subparsers.add_parser(
+            "install",
+            description="Install pygithooks in Git project",
+            help="Install pygithooks in Git project",
+        )
+        parser_install.set_defaults(action=self.install)
+
+        self.args = vars(self.parser.parse_args(self.ctx.argv[1:]))
+
+        self.ctx.verbose = self.args.pop("verbose")
+        if self.ctx.verbose:
+            self.ctx.msg("running in verbose mode")
+
+        chdir: Path
+        if chdir := self.args.pop("chdir", None):
+            chdir = chdir.absolute()
+            if chdir.is_dir():
+                self.ctx.cwd = chdir
+                os.chdir(self.ctx.cwd)
+            else:
+                raise PyGitHooksUsageError(
+                    f"not a directory: {chdir}",
+                    "`cd` into a directory and omit the `--chdir DIR` option, or choose a valid DIR value.",
+                )
+        if self.ctx.verbose:
+            self.ctx.msg("cwd:", self.ctx.cwd)
+
+        git_repo: Path | None = self.args.pop("git_repo", None)
+        self.git_repo = git_repo if git_repo else self._default_git_repo()
+        if self.ctx.verbose:
+            self.ctx.msg("git repo:", self.git_repo)
+
+        git_dir: Path | None = self.args.pop("git_dir", None)
+        self.git_dir = git_dir if git_dir else self.git_repo / ".git"
+        if self.ctx.verbose:
+            self.ctx.msg("git dir:", self.git_dir)
+
+        self.action = self.args.pop("action")
+
+    def _default_git_repo(self) -> Path:
+        for path in [self.ctx.cwd] + list(self.ctx.cwd.parents):
+            if (path / ".git").is_dir():
+                return path
+
+        raise PyGitHooksUsageError(
+            f"Could not find a git repo here: {self.ctx.cwd}",
+            "`cd` into a git repo, or use one of these CLI options: `--chdir DIR`, `--git-repo DIR`.",
+        )
 
     def main(self) -> None:
-        args = vars(self.parser.parse_args(self.ctx.argv[1:]))
-        chdir: Path
-        if chdir := args.pop("chdir", None):
-            self.ctx.cwd = chdir
-
-        action = args.pop("action")
-        action(self, **args)
+        self.action(**self.args)
 
     def help(self):
         self.parser.print_help(self.ctx.stderr)
@@ -216,10 +311,6 @@ class PyGitHooks:
         return os.pathsep.join([str(Path(sys.executable).parent.resolve()), self.env_path])
 
     @cached_property
-    def git_dir(self) -> Path:
-        return Path(self.run_git("rev-parse --git-dir", capture_output=True).stdout.strip())
-
-    @cached_property
     def git_hooks_path(self) -> Path:
         return Path(
             self.run_git(
@@ -231,44 +322,28 @@ class PyGitHooks:
         )
 
     @cached_property
-    def git_top_level(self) -> Path:
-        return Path(
-            self.run_git("rev-parse --show-toplevel", capture_output=True).stdout.strip()
-        ).absolute()
-
-    @cached_property
     def pygithooks_path(self) -> Path:
-        return self.git_top_level / ".pygithooks"
+        return self.git_repo / ".pygithooks"
 
 
-def main(ctx: Optional[Ctx] = None):
+def main(ctx: Ctx | None = None):
     ctx = ctx or Ctx()
-    parser = argparse.ArgumentParser(
-        Path(ctx.argv[0]).name,
-        description="TODO",
-        allow_abbrev=False,
-    )
-    parser.set_defaults(action=PyGitHooks.help)
-    parser.add_argument("--chdir", "-C", metavar="DIR", type=Path, help="chdir to this directory")
-    subparsers = parser.add_subparsers(title="Commands")
-
-    parser_run = subparsers.add_parser(
-        "run",
-        description="Run a Git hook",
-        help="Run a Git hook",
-    )
-    parser_run.set_defaults(action=PyGitHooks.run)
-    parser_run.add_argument("hook", choices=GIT_HOOKS.keys(), help="Hook name as defined by Git")
-
-    parser_install = subparsers.add_parser(
-        "install",
-        description="Install pygithooks in Git project",
-        help="Install pygithooks in Git project",
-    )
-    parser_install.set_defaults(action=PyGitHooks.install)
-
-    py_git_hooks = PyGitHooks(ctx, parser)
-    py_git_hooks.main()
+    try:
+        py_git_hooks = PyGitHooks(ctx)
+        py_git_hooks.main()
+    except PyGitHooksUsageError as err:
+        ctx.msg("ERROR:", err.args[0], style="bold red")
+        ctx.msg("Potential solutions to this error:", err.args[1], style="yellow")
+        ctx.msg("Otherwise this is a bug, please report it.", style="yellow")
+        sys.exit(1)
+    except PyGitHooksError as err:
+        ctx.msg("INTERNAL ERROR:", *err.args, style="bold red")
+        ctx.msg("This is a bug, please report it.", style="red")
+        if ctx.verbose:
+            ctx.msg(*traceback.format_exception(err), sep="\n", style="yellow")
+        else:
+            ctx.msg("For more error info, re-run with the `--verbose` CLI option.", style="yellow")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

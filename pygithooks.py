@@ -227,14 +227,16 @@ class PyGitHooks:
     def _run_git_hook_script(self, git_hook_script: GitHookScript) -> CompletedGitHookScript:
         completed_process: Optional[subprocess.CompletedProcess] = None
         try:
-            completed_process = self.ctx.run([git_hook_script.path_full], check=False)
+            completed_process = self.ctx.run(
+                [git_hook_script.path_full], check=False, capture_output=True
+            )
         except OSError:
             pass
 
         return CompletedGitHookScript(git_hook_script, completed_process)
 
     def run(self, *, hook: str):
-        # self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
+        self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
         self.env_path = self.env_path_with_sys_exe_prefix
 
         results: List[CompletedGitHookScript] = []
@@ -256,17 +258,21 @@ class PyGitHooks:
                     f"[bold]{git_hook_script.name}[/bold]: [bold]FAILED[/bold]", style="fail"
                 )
 
+            if result.completed_process:
+                self.ctx.stderr.write(result.completed_process.stderr)
+                self.ctx.stdout.write(result.completed_process.stdout)
+
         # self.ctx.msg(f"finished running [bold]{hook}[/bold] hooks.", style="info")
         all_passed = all(result.passed or result.skipped for result in results)
         any_passed = any(result.passed for result in results)
         if any_passed and all_passed:
-            # self.ctx.msg(f"{hook} hooks PASSED", style="PASS")
+            self.ctx.msg(f"{hook} hooks PASSED", style="PASS")
             sys.exit(0)
         elif all_passed:
-            # self.ctx.msg(f"{hook} hooks SKIPPED", style="WARN")
+            self.ctx.msg(f"{hook} hooks SKIPPED", style="WARN")
             sys.exit(0)
         else:
-            # self.ctx.msg(f"{hook} hooks FAILED", style="FAIL")
+            self.ctx.msg(f"{hook} hooks FAILED", style="FAIL")
             sys.exit(1)
 
     def install(self):

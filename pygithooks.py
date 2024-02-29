@@ -100,7 +100,7 @@ class GitHook:
 class GitHookScript:
     git_hook: GitHook
     name: str
-    path_full: Path
+    path: Path
 
 
 @dataclass
@@ -129,6 +129,7 @@ class PyGitHooks:
     verbose: bool = field(init=False)
     git_repo: Path = field(init=False)
     git_dir: Path = field(init=False)
+    pygithooks_path: Path = field(init=False)
     action: Callable = field(init=False)
     args: Dict[str, Any] = field(init=False)
 
@@ -206,6 +207,8 @@ class PyGitHooks:
         if self.ctx.verbose:
             self.ctx.msg("git dir:", self.git_dir)
 
+        self.pygithooks_path = self.git_repo / ".pygithooks"
+
         self.action = self.args.pop("action")
 
     def _default_git_repo(self) -> Path:
@@ -227,18 +230,25 @@ class PyGitHooks:
     def _run_git_hook_script(self, git_hook_script: GitHookScript) -> CompletedGitHookScript:
         completed_process: Optional[subprocess.CompletedProcess] = None
         try:
+            python_bin_path = Path(sys.executable).parent.resolve().as_posix()
             completed_process = self.ctx.run(
-                [git_hook_script.path_full], check=False, capture_output=True
+                [git_hook_script.path.absolute()],
+                check=False,
+                capture_output=True,
+                cwd=self.git_repo,
+                env={
+                    **self.ctx.env,
+                    "PATH": os.pathsep.join([python_bin_path, self.ctx.env["PATH"]]),
+                },
             )
-        except OSError:
+        except OSError as err:
+            self.ctx.msg(err)
             pass
 
         return CompletedGitHookScript(git_hook_script, completed_process)
 
     def run(self, *, hook: str):
         self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
-        self.env_path = self.env_path_with_sys_exe_prefix
-
         results: List[CompletedGitHookScript] = []
         for git_hook_script in self.git_hook_scripts(GIT_HOOKS[hook]):
             # self.ctx.msg(f"running hook [bold]{git_hook_script.name}[/bold]:", style="info")
@@ -300,18 +310,6 @@ class PyGitHooks:
     def run_git(self, *args, **kwargs) -> subprocess.CompletedProcess:
         return self.ctx.run("git", *args, **kwargs)
 
-    @property
-    def env_path(self) -> str:
-        return self.ctx.env.get("PATH", "")
-
-    @env_path.setter
-    def env_path(self, path: str):
-        self.ctx.env["PATH"] = path
-
-    @property
-    def env_path_with_sys_exe_prefix(self) -> str:
-        return os.pathsep.join([str(Path(sys.executable).parent.resolve()), self.env_path])
-
     @cached_property
     def git_hooks_path(self) -> Path:
         return Path(
@@ -322,10 +320,6 @@ class PyGitHooks:
                 capture_output=True,
             ).stdout.strip()
         )
-
-    @cached_property
-    def pygithooks_path(self) -> Path:
-        return self.git_repo / ".pygithooks"
 
 
 @contextlib.contextmanager

@@ -1,17 +1,11 @@
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry]
+[project]
 name = "pygithooks"
-version = "0.1.0"
 description = "A simple Git hooks manager for Python projects"
-authors = ["Boldizsar Palotas <boldizsar.palotas@gmail.com>"]
-license = "0BSD"
-readme = "README.md"
-packages = [
-    {include = "pygithooks.py"}
+authors = [
+    { name = "Boldizsar Palotas", email = "boldizsar.palotas@gmail.com" },
 ]
+license = { text = "0BSD" }
+readme = "README.md"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -29,20 +23,40 @@ classifiers = [
     "Topic :: Software Development :: Version Control :: Git",
     "Topic :: Utilities",
 ]
+# TODO list allowed features
+requires-python = ">=3.8"
+dynamic = ["version"]
 
-[tool.poetry.scripts]
+dependencies = [
+    "rich", # rich text console output
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+
+[tool.pdm.scripts]
 pygithooks = 'pygithooks:main'
 
-[tool.poetry.dependencies]
-python = "^3.8"
-rich = "^13.7.0"
+[tool.pdm.version]
+source = "scm"
 
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.2.2"
-mypy = "^1.8.0"
-GitPython = "^3.1.42"
-tox = "^4.13.0"
-pytest = "^8.0.1"
+[tool.pdm.dev-dependencies]
+dev = [
+    # Linting and type checking:
+    "ruff",
+    "mypy",
+    # Testing:
+    "pytest",
+    "GitPython",
+    "tox",
+    # Package management and building:
+    "build",
+    "pdm",
+    "pdm-backend",
+]
 
 [tool.ruff]
 line-length = 100

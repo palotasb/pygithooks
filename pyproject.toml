@@ -28,6 +28,7 @@ requires-python = ">=3.8"
 dynamic = ["version"]
 
 dependencies = [
+    "tomli", # parse .toml files
     "rich", # rich text console output
 ]
 

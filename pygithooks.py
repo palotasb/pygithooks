@@ -15,6 +15,7 @@ import rich
 import rich.console
 import rich.theme
 import rich.traceback
+import tomli
 
 FILE = Path(__file__).absolute()
 
@@ -103,6 +104,7 @@ class GitHookScript:
     git_hook: GitHook
     name: str
     path: Path
+    args: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -122,6 +124,14 @@ class CompletedGitHookScript:
 GIT_HOOKS: Dict[str, GitHook] = {
     "pre-commit": GitHook("pre-commit"),
 }
+
+
+def _is_shell_script(path: Path) -> bool:
+    return path.suffix == ".sh" and (path.stat().st_mode & stat.S_IEXEC) == stat.S_IEXEC
+
+
+def _is_toml(path: Path) -> bool:
+    return path.suffix == ".toml"
 
 
 @dataclass
@@ -309,11 +319,23 @@ class PyGitHooks:
     def git_hook_scripts(self, git_hook: GitHook) -> Iterable[GitHookScript]:
         top_level = Path(self.pygithooks_path / git_hook.name)
         if top_level.is_dir():
-            yield from [
-                GitHookScript(git_hook, path.relative_to(self.pygithooks_path).as_posix(), path)
-                for path in sorted(top_level.iterdir())
-                if path.stat().st_mode & stat.S_IEXEC == stat.S_IEXEC
-            ]
+            for path in sorted(top_level.iterdir()):
+                if _is_shell_script(path):
+                    yield GitHookScript(
+                        git_hook, path.relative_to(self.pygithooks_path).as_posix(), path
+                    )
+                elif _is_toml(path):
+                    yield from self._git_hook_toml_scripts(git_hook, path)
+
+    def _git_hook_toml_scripts(self, git_hook: GitHook, path: Path) -> Iterable[GitHookScript]:
+        with path.open("rb") as fp:
+            d = tomli.load(fp)
+            for scripts in d.get("pygithooks", {}):
+                assert isinstance(scripts, dict)
+                for name, script in sorted(scripts.items()):
+                    if isinstance(script, str):
+                        args = shlex.split(script)
+                        yield GitHookScript(git_hook, name, Path(args[0]), args[1:])
 
     def run_git(self, *args, **kwargs) -> subprocess.CompletedProcess:
         return self.ctx.run("git", *args, **kwargs)

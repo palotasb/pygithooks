@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.4.1"
-content_hash = "sha256:ba991e3b4954353c9065d7fb3c1d3b3559c46cd869fdbdbc2eb2515b366d2498"
+content_hash = "sha256:6dd5e265a99cb84953583ceb149ce39d3f2be87d595e8a6d965c8a29b30e2ebc"
 
 [[package]]
 name = "blinker"
@@ -753,8 +753,7 @@ name = "tomli"
 version = "2.0.1"
 requires_python = ">=3.7"
 summary = "A lil' TOML parser"
-groups = ["dev"]
-marker = "python_version < \"3.11\""
+groups = ["default", "dev"]
 files = [
     {file = "tomli-2.0.1-py3-none-any.whl", hash = "sha256:939de3e7a6161af0c887ef91b7d41a53e7c5a1ca976325f429cb46ea9bc30ecc"},
     {file = "tomli-2.0.1.tar.gz", hash = "sha256:de526c12914f0c550d15924c62d72abc48d6fe7364aa87328337a31007fe8a4f"},
@@ -773,7 +772,7 @@ files = [
 
 [[package]]
 name = "tox"
-version = "4.14.0"
+version = "4.14.1"
 requires_python = ">=3.8"
 summary = "tox is a generic virtualenv management and test command line tool"
 groups = ["dev"]
@@ -790,8 +789,8 @@ dependencies = [
     "virtualenv>=20.25",
 ]
 files = [
-    {file = "tox-4.14.0-py3-none-any.whl", hash = "sha256:35976739e39e60e913bef4cf8226be64eb9eed6fdb9a44c6924265ebe11cbcae"},
-    {file = "tox-4.14.0.tar.gz", hash = "sha256:286807f8a581e55785dc30ff956a81583016625f6dd296948aa7a43001c1bb00"},
+    {file = "tox-4.14.1-py3-none-any.whl", hash = "sha256:b03754b6ee6dadc70f2611da82b4ed8f625fcafd247e15d1d0cb056f90a06d3b"},
+    {file = "tox-4.14.1.tar.gz", hash = "sha256:f0ad758c3bbf7e237059c929d3595479363c3cdd5a06ac3e49d1dd020ffbee45"},
 ]
 
 [[package]]

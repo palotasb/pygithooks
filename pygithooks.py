@@ -236,11 +236,20 @@ class PyGitHooks:
         self.parser.print_help(self.ctx.stderr)
 
     def _run_git_hook_script(self, git_hook_script: GitHookScript) -> CompletedGitHookScript:
-        completed_process: Optional[subprocess.CompletedProcess] = None
         try:
             python_bin_path = Path(sys.executable).parent.resolve().as_posix()
+            argv: List[Union[str, Path]] = []
+            if git_hook_script.path.stat().st_mode & stat.S_IEXEC == stat.S_IEXEC:
+                argv = [git_hook_script.path]
+            elif git_hook_script.path.suffix == ".sh":
+                argv = ["sh", git_hook_script.path]
+            elif git_hook_script.path.suffix == ".py":
+                argv = [sys.executable, git_hook_script.path]
+            else:
+                return CompletedGitHookScript(git_hook_script, None)
+
             completed_process = self.ctx.run(
-                [git_hook_script.path.absolute()],
+                argv,
                 check=False,
                 capture_output=True,
                 cwd=self.git_repo,
@@ -249,11 +258,10 @@ class PyGitHooks:
                     "PATH": os.pathsep.join([python_bin_path, self.ctx.env["PATH"]]),
                 },
             )
+            return CompletedGitHookScript(git_hook_script, completed_process)
         except OSError as err:
             self.ctx.msg(err)
-            pass
-
-        return CompletedGitHookScript(git_hook_script, completed_process)
+            return CompletedGitHookScript(git_hook_script, None)
 
     def run(self, *, hook: str):
         self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
@@ -310,9 +318,11 @@ class PyGitHooks:
         top_level = Path(self.pygithooks_path / git_hook.name)
         if top_level.is_dir():
             yield from [
-                GitHookScript(git_hook, path.relative_to(self.pygithooks_path).as_posix(), path)
+                GitHookScript(
+                    git_hook, path.relative_to(self.pygithooks_path).as_posix(), path.absolute()
+                )
                 for path in sorted(top_level.iterdir())
-                if path.stat().st_mode & stat.S_IEXEC == stat.S_IEXEC
+                if path.is_file()
             ]
 
     def run_git(self, *args, **kwargs) -> subprocess.CompletedProcess:
@@ -336,7 +346,8 @@ def basic_error_handler():
         yield
     except Exception as err:
         print(
-            "pygithooks: INTERNAL ERROR:", err.__class__.__name__, "-", *err.args, file=sys.stderr
+            f"pygithooks: INTERNAL ERROR: {type(err).__name__}: {' '.join(err.args)}",
+            file=sys.stderr,
         )
         print("pygithooks: This is a bug, please report it.", file=sys.stderr)
         print("pygithooks:", *traceback.format_exception(err), sep="\n", file=sys.stderr)

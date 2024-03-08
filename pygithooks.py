@@ -123,6 +123,11 @@ GIT_HOOKS: Dict[str, GitHook] = {
     "pre-commit": GitHook("pre-commit"),
 }
 
+_KNOWN_NOT_EXECUTABLE_FILES = (
+    ".txt",
+    ".md",
+)
+
 
 @dataclass
 class PyGitHooks:
@@ -243,9 +248,18 @@ class PyGitHooks:
                 argv = [git_hook_script.path]
             elif git_hook_script.path.suffix == ".sh":
                 argv = ["sh", git_hook_script.path]
+            elif git_hook_script.path.suffix == ".bash":
+                argv = ["bash", git_hook_script.path]
+            elif git_hook_script.path.suffix == ".zsh":
+                argv = ["zsh", git_hook_script.path]
             elif git_hook_script.path.suffix == ".py":
                 argv = [sys.executable, git_hook_script.path]
             else:
+                if git_hook_script.path.suffix not in _KNOWN_NOT_EXECUTABLE_FILES:
+                    self.ctx.msg(
+                        f"found {git_hook_script.name}, but it isn't executable, so it will be skipped.",
+                        style="info",
+                    )
                 return CompletedGitHookScript(git_hook_script, None)
 
             completed_process = self.ctx.run(

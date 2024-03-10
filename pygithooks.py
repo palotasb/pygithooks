@@ -9,7 +9,7 @@ import traceback
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Union
 
 import rich
 import rich.console
@@ -95,7 +95,6 @@ class Ctx:
 @dataclass
 class GitHook:
     name: str
-    args: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -119,8 +118,39 @@ class CompletedGitHookScript:
         return self.completed_process is not None and self.completed_process.returncode == 0
 
 
+# https://git-scm.com/docs/githooks#_hooks
 GIT_HOOKS: Dict[str, GitHook] = {
-    "pre-commit": GitHook("pre-commit"),
+    git_hook.name: git_hook
+    for git_hook in [
+        GitHook("applypatch-msg"),
+        GitHook("pre-applypatch"),
+        GitHook("post-applypatch"),
+        GitHook("pre-commit"),
+        GitHook("pre-merge-commit"),
+        GitHook("prepare-commit-msg"),
+        GitHook("commit-msg"),
+        GitHook("post-commit"),
+        GitHook("pre-rebase"),
+        GitHook("post-checkout"),
+        GitHook("post-merge"),
+        GitHook("pre-push"),
+        GitHook("pre-receive"),
+        GitHook("update"),
+        # GitHook("proc-receive"), # would require implementing a line protocol
+        GitHook("post-receive"),
+        GitHook("post-update"),
+        GitHook("reference-transaction"),
+        GitHook("push-to-checkout"),
+        GitHook("pre-auto-gc"),
+        GitHook("post-rewrite"),
+        GitHook("sendemail-validate"),
+        GitHook("fsmonitor-watchman"),
+        # GitHook("p4-changelist"),
+        # GitHook("p4-prepare-changelist"),
+        # GitHook("p4-post-changelist"),
+        # GitHook("p4-pre-submit"),
+        GitHook("post-index-change"),
+    ]
 }
 
 _KNOWN_NOT_EXECUTABLE_FILES = (
@@ -182,6 +212,7 @@ class PyGitHooks:
         parser_run.add_argument(
             "hook", choices=GIT_HOOKS.keys(), help="Hook name as defined by Git"
         )
+        parser_run.add_argument("args", nargs="*", help="standard git hook arguments")
 
         parser_install = subparsers.add_parser(
             "install",
@@ -240,20 +271,22 @@ class PyGitHooks:
     def help(self):
         self.parser.print_help(self.ctx.stderr)
 
-    def _run_git_hook_script(self, git_hook_script: GitHookScript) -> CompletedGitHookScript:
+    def _run_git_hook_script(
+        self, git_hook_script: GitHookScript, args: List[str]
+    ) -> CompletedGitHookScript:
         try:
             python_bin_path = Path(sys.executable).parent.resolve().as_posix()
-            argv: List[Union[str, Path]] = []
+            cmd: List[Union[str, Path]] = []
             if git_hook_script.path.stat().st_mode & stat.S_IEXEC == stat.S_IEXEC:
-                argv = [git_hook_script.path]
+                cmd = [git_hook_script.path]
             elif git_hook_script.path.suffix == ".sh":
-                argv = ["sh", git_hook_script.path]
+                cmd = ["sh", git_hook_script.path]
             elif git_hook_script.path.suffix == ".bash":
-                argv = ["bash", git_hook_script.path]
+                cmd = ["bash", git_hook_script.path]
             elif git_hook_script.path.suffix == ".zsh":
-                argv = ["zsh", git_hook_script.path]
+                cmd = ["zsh", git_hook_script.path]
             elif git_hook_script.path.suffix == ".py":
-                argv = [sys.executable, git_hook_script.path]
+                cmd = [sys.executable, git_hook_script.path]
             else:
                 if git_hook_script.path.suffix not in _KNOWN_NOT_EXECUTABLE_FILES:
                     self.ctx.msg(
@@ -263,7 +296,7 @@ class PyGitHooks:
                 return CompletedGitHookScript(git_hook_script, None)
 
             completed_process = self.ctx.run(
-                argv,
+                cmd + args,
                 check=False,
                 capture_output=True,
                 cwd=self.git_repo,
@@ -277,12 +310,12 @@ class PyGitHooks:
             self.ctx.msg(err)
             return CompletedGitHookScript(git_hook_script, None)
 
-    def run(self, *, hook: str):
+    def run(self, *, hook: str, args: List[str]):
         self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
         results: List[CompletedGitHookScript] = []
         for git_hook_script in self.git_hook_scripts(GIT_HOOKS[hook]):
             # self.ctx.msg(f"running hook [bold]{git_hook_script.name}[/bold]:", style="info")
-            result = self._run_git_hook_script(git_hook_script)
+            result = self._run_git_hook_script(git_hook_script, args)
             results.append(result)
 
             if result.passed:

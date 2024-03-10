@@ -311,9 +311,14 @@ class PyGitHooks:
             return CompletedGitHookScript(git_hook_script, None)
 
     def run(self, *, hook: str, args: List[str]):
-        self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
         results: List[CompletedGitHookScript] = []
-        for git_hook_script in self.git_hook_scripts(GIT_HOOKS[hook]):
+        git_hook_scripts = list(self.git_hook_scripts(GIT_HOOKS[hook]))
+        if not git_hook_scripts:
+            return
+
+        self.ctx.msg(f"[bold]{hook}[/bold] hooks running...", style="info")
+
+        for git_hook_script in git_hook_scripts:
             # self.ctx.msg(f"running hook [bold]{git_hook_script.name}[/bold]:", style="info")
             result = self._run_git_hook_script(git_hook_script, args)
             results.append(result)
